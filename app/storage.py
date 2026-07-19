@@ -9,7 +9,7 @@ MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 
 
 class UploadValidationError(Exception):
-    """Raised when an uploaded file is not acceptable for the PoC parser."""
+    """Raised when an uploaded file is not acceptable for the parser."""
 
 
 def validate_pdf_upload(filename: str, content: bytes) -> None:
@@ -18,7 +18,7 @@ def validate_pdf_upload(filename: str, content: bytes) -> None:
     if not content:
         raise UploadValidationError("The uploaded PDF is empty.")
     if len(content) > MAX_UPLOAD_BYTES:
-        raise UploadValidationError("PDF files must be 15 MB or smaller for this PoC.")
+        raise UploadValidationError("PDF files must be 15 MB or smaller.")
 
 
 def sanitize_filename(filename: str) -> str:

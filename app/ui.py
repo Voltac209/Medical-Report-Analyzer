@@ -1,9 +1,16 @@
 import pandas as pd
 import streamlit as st
 
-from app.db import create_report, format_uploaded_at, init_db, list_reports, replace_report_pages
-from app.pdf_parser import combined_preview, extract_pages
-from app.storage import save_uploaded_pdf
+from app.db import (
+    create_report,
+    format_uploaded_at,
+    get_report_pages,
+    init_db,
+    list_reports,
+    replace_report_pages,
+)
+from app.pdf_parser import PdfParsingError, combined_preview, extract_pages, page_text_stats
+from app.storage import UploadValidationError, save_uploaded_pdf
 
 
 DISCLAIMER = """
@@ -41,21 +48,44 @@ def upload_report() -> None:
 
     if st.button("Parse and save report", type="primary"):
         try:
-            stored_path = save_uploaded_pdf(uploaded_file.name, uploaded_file.getvalue())
+            content = uploaded_file.getvalue()
+            stored_path = save_uploaded_pdf(uploaded_file.name, content)
             pages = extract_pages(stored_path)
-            report_id = create_report(uploaded_file.name, stored_path, len(pages))
+            stats = page_text_stats(pages)
+            status = "parsed" if stats["text_char_count"] else "needs_ocr"
+            report_id = create_report(
+                uploaded_file.name,
+                stored_path,
+                stats["page_count"],
+                stats["text_page_count"],
+                stats["text_char_count"],
+                status,
+            )
             replace_report_pages(report_id, pages)
+        except UploadValidationError as exc:
+            st.error(str(exc))
+            return
+        except PdfParsingError as exc:
+            st.error(str(exc))
+            st.info("Try a text-based lab report PDF. OCR for scanned reports is planned later.")
+            return
         except Exception as exc:
             st.error("Could not parse and save this report.")
             st.code(str(exc))
             return
 
-        st.success(f"Saved report #{report_id} with {len(pages)} pages.")
+        st.success(f"Saved report #{report_id} with {stats['page_count']} pages.")
+        st.caption(
+            f"Selectable text found on {stats['text_page_count']} page(s), "
+            f"{stats['text_char_count']} characters total."
+        )
         preview = combined_preview(pages)
         if preview:
             st.text_area("Extracted text preview", preview, height=320)
         else:
-            st.warning("No selectable text was found. OCR support is a future enhancement.")
+            st.warning(
+                "No selectable text was found. This is likely a scanned PDF; OCR support is a future enhancement."
+            )
 
 
 def report_history() -> None:
@@ -77,6 +107,8 @@ def report_history() -> None:
                 "ID": report["id"],
                 "Filename": report["original_filename"],
                 "Pages": report["page_count"],
+                "Text pages": report["text_page_count"],
+                "Text chars": report["text_char_count"],
                 "Status": report["status"],
                 "Uploaded": format_uploaded_at(report["uploaded_at"]),
             }
@@ -84,6 +116,23 @@ def report_history() -> None:
         ]
     )
     st.dataframe(frame, hide_index=True, use_container_width=True)
+
+    selected_id = st.selectbox(
+        "Preview stored page text",
+        options=[report["id"] for report in reports],
+        format_func=lambda report_id: next(
+            report["original_filename"] for report in reports if report["id"] == report_id
+        ),
+    )
+    pages = get_report_pages(selected_id)
+    if pages:
+        preview_pages = [
+            {"page_number": page["page_number"], "text": page["text_content"]}
+            for page in pages
+        ]
+        st.text_area("Stored source text", combined_preview(preview_pages), height=260)
+    else:
+        st.info("This report has no stored selectable text yet.")
 
 
 def main() -> None:

@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS reports (
     stored_path TEXT NOT NULL,
     uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     page_count INTEGER NOT NULL DEFAULT 0,
+    text_page_count INTEGER NOT NULL DEFAULT 0,
+    text_char_count INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'uploaded'
 );
 
@@ -32,6 +34,14 @@ CREATE INDEX IF NOT EXISTS idx_report_pages_report_id
 ON report_pages(report_id);
 """
 
+MIGRATION_SQL = """
+ALTER TABLE reports
+ADD COLUMN IF NOT EXISTS text_page_count INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE reports
+ADD COLUMN IF NOT EXISTS text_char_count INTEGER NOT NULL DEFAULT 0;
+"""
+
 
 @contextmanager
 def get_connection():
@@ -42,18 +52,40 @@ def get_connection():
 def init_db() -> None:
     with get_connection() as conn:
         conn.execute(SCHEMA_SQL)
+        conn.execute(MIGRATION_SQL)
         conn.commit()
 
 
-def create_report(original_filename: str, stored_path: Path, page_count: int) -> int:
+def create_report(
+    original_filename: str,
+    stored_path: Path,
+    page_count: int,
+    text_page_count: int,
+    text_char_count: int,
+    status: str,
+) -> int:
     with get_connection() as conn:
         row = conn.execute(
             """
-            INSERT INTO reports (original_filename, stored_path, page_count, status)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO reports (
+                original_filename,
+                stored_path,
+                page_count,
+                text_page_count,
+                text_char_count,
+                status
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (original_filename, str(stored_path), page_count, "parsed"),
+            (
+                original_filename,
+                str(stored_path),
+                page_count,
+                text_page_count,
+                text_char_count,
+                status,
+            ),
         ).fetchone()
         conn.commit()
         return int(row["id"])
@@ -81,11 +113,33 @@ def list_reports() -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute(
             """
-            SELECT id, original_filename, stored_path, uploaded_at, page_count, status
+            SELECT
+                id,
+                original_filename,
+                stored_path,
+                uploaded_at,
+                page_count,
+                text_page_count,
+                text_char_count,
+                status
             FROM reports
             ORDER BY uploaded_at DESC
             LIMIT 25
             """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_report_pages(report_id: int) -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT page_number, text_content
+            FROM report_pages
+            WHERE report_id = %s
+            ORDER BY page_number
+            """,
+            (report_id,),
         ).fetchall()
         return [dict(row) for row in rows]
 
