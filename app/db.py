@@ -32,6 +32,24 @@ CREATE TABLE IF NOT EXISTS report_pages (
 
 CREATE INDEX IF NOT EXISTS idx_report_pages_report_id
 ON report_pages(report_id);
+
+CREATE TABLE IF NOT EXISTS lab_observations (
+    id SERIAL PRIMARY KEY,
+    report_id INTEGER NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+    test_name TEXT NOT NULL,
+    normalized_name TEXT,
+    value NUMERIC,
+    unit TEXT,
+    reference_range TEXT,
+    abnormal_flag TEXT,
+    report_date TEXT,
+    page_number INTEGER,
+    source_snippet TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_lab_observations_report_id
+ON lab_observations(report_id);
 """
 
 MIGRATION_SQL = """
@@ -138,6 +156,71 @@ def get_report_pages(report_id: int) -> list[dict]:
             FROM report_pages
             WHERE report_id = %s
             ORDER BY page_number
+            """,
+            (report_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def replace_lab_observations(report_id: int, observations: Iterable[dict]) -> None:
+    with get_connection() as conn:
+        conn.execute("DELETE FROM lab_observations WHERE report_id = %s", (report_id,))
+        rows = [
+            (
+                report_id,
+                observation["test_name"],
+                observation.get("normalized_name"),
+                observation.get("value"),
+                observation.get("unit"),
+                observation.get("reference_range"),
+                observation.get("abnormal_flag"),
+                observation.get("report_date"),
+                observation.get("page_number"),
+                observation["source_snippet"],
+            )
+            for observation in observations
+        ]
+        if rows:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    """
+                    INSERT INTO lab_observations (
+                        report_id,
+                        test_name,
+                        normalized_name,
+                        value,
+                        unit,
+                        reference_range,
+                        abnormal_flag,
+                        report_date,
+                        page_number,
+                        source_snippet
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    rows,
+                )
+        conn.commit()
+
+
+def get_lab_observations(report_id: int) -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                id,
+                test_name,
+                normalized_name,
+                value,
+                unit,
+                reference_range,
+                abnormal_flag,
+                report_date,
+                page_number,
+                source_snippet
+            FROM lab_observations
+            WHERE report_id = %s
+            ORDER BY test_name, id
             """,
             (report_id,),
         ).fetchall()

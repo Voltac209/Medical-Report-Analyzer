@@ -19,3 +19,13 @@ def get_database_url() -> str:
 @lru_cache
 def get_upload_dir() -> Path:
     return Path(os.getenv("UPLOAD_DIR", "uploads"))
+
+
+@lru_cache
+def get_openai_api_key() -> str:
+    return os.getenv("OPENAI_API_KEY", "")
+
+
+@lru_cache
+def get_openai_model() -> str:
+    return os.getenv("OPENAI_MODEL", "gpt-5.6")

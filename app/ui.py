@@ -4,11 +4,14 @@ import streamlit as st
 from app.db import (
     create_report,
     format_uploaded_at,
+    get_lab_observations,
     get_report_pages,
     init_db,
     list_reports,
+    replace_lab_observations,
     replace_report_pages,
 )
+from app.llm import LabExtractionError, extract_lab_observations
 from app.pdf_parser import PdfParsingError, combined_preview, extract_pages, page_text_stats
 from app.storage import UploadValidationError, save_uploaded_pdf
 
@@ -118,13 +121,48 @@ def report_history() -> None:
     st.dataframe(frame, hide_index=True, use_container_width=True)
 
     selected_id = st.selectbox(
-        "Preview stored page text",
+        "Select a report",
         options=[report["id"] for report in reports],
         format_func=lambda report_id: next(
             report["original_filename"] for report in reports if report["id"] == report_id
         ),
     )
     pages = get_report_pages(selected_id)
+    lab_observations = get_lab_observations(selected_id)
+
+    if st.button("Extract lab values"):
+        try:
+            extracted = extract_lab_observations(pages)
+            replace_lab_observations(selected_id, extracted)
+        except LabExtractionError as exc:
+            st.error(str(exc))
+        except Exception as exc:
+            st.error("Could not save extracted lab values.")
+            st.code(str(exc))
+        else:
+            st.success(f"Saved {len(extracted)} lab observation(s).")
+            lab_observations = get_lab_observations(selected_id)
+
+    if lab_observations:
+        observation_frame = pd.DataFrame(
+            [
+                {
+                    "Test": observation["test_name"],
+                    "Value": observation["value"],
+                    "Unit": observation["unit"],
+                    "Reference range": observation["reference_range"],
+                    "Flag": observation["abnormal_flag"],
+                    "Date": observation["report_date"],
+                    "Page": observation["page_number"],
+                    "Source": observation["source_snippet"],
+                }
+                for observation in lab_observations
+            ]
+        )
+        st.dataframe(observation_frame, hide_index=True, use_container_width=True)
+    else:
+        st.info("No lab values extracted for this report yet.")
+
     if pages:
         preview_pages = [
             {"page_number": page["page_number"], "text": page["text_content"]}
