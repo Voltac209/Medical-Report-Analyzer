@@ -4,6 +4,7 @@ from app.config import get_openai_api_key, get_openai_model
 
 
 MAX_EXTRACTION_CHARS = 12000
+MAX_SIMPLIFICATION_CHARS = 10000
 
 
 LAB_OBSERVATION_SCHEMA = {
@@ -43,9 +44,44 @@ LAB_OBSERVATION_SCHEMA = {
     "required": ["observations"],
 }
 
+SIMPLIFICATION_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "explanations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "test_name": {"type": "string"},
+                    "plain_language_name": {"type": "string"},
+                    "explanation": {"type": "string"},
+                    "result_context": {"type": "string"},
+                    "caution": {"type": "string"},
+                    "source_page": {"type": ["integer", "null"]},
+                },
+                "required": [
+                    "test_name",
+                    "plain_language_name",
+                    "explanation",
+                    "result_context",
+                    "caution",
+                    "source_page",
+                ],
+            },
+        }
+    },
+    "required": ["explanations"],
+}
+
 
 class LabExtractionError(Exception):
     """Raised when lab observation extraction cannot complete."""
+
+
+class SimplificationError(Exception):
+    """Raised when medical term simplification cannot complete."""
 
 
 def build_report_text(pages: list[dict], max_chars: int = MAX_EXTRACTION_CHARS) -> str:
@@ -105,3 +141,84 @@ def extract_lab_observations(pages: list[dict]) -> list[dict]:
     if not isinstance(observations, list):
         raise LabExtractionError("OpenAI response did not include an observations list.")
     return observations
+
+
+def build_observation_context(
+    observations: list[dict],
+    max_chars: int = MAX_SIMPLIFICATION_CHARS,
+) -> str:
+    lines = []
+    for observation in observations:
+        test_name = observation.get("test_name") or "Unknown test"
+        value = observation.get("value")
+        unit = observation.get("unit") or ""
+        reference_range = observation.get("reference_range") or "not provided"
+        abnormal_flag = observation.get("abnormal_flag") or "not provided"
+        page_number = observation.get("page_number")
+        source_snippet = observation.get("source_snippet") or ""
+
+        lines.append(
+            "\n".join(
+                [
+                    f"Test: {test_name}",
+                    f"Value: {value} {unit}".strip(),
+                    f"Reference range: {reference_range}",
+                    f"Flag: {abnormal_flag}",
+                    f"Source page: {page_number}",
+                    f"Source snippet: {source_snippet}",
+                ]
+            )
+        )
+    return "\n\n".join(lines)[:max_chars]
+
+
+def simplify_lab_observations(observations: list[dict]) -> list[dict]:
+    api_key = get_openai_api_key()
+    if not api_key:
+        raise SimplificationError("OPENAI_API_KEY is not configured.")
+    if not observations:
+        raise SimplificationError("No lab observations are available to simplify.")
+
+    observation_context = build_observation_context(observations)
+    if not observation_context:
+        raise SimplificationError("No readable lab observation context is available.")
+
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=api_key)
+        response = client.responses.create(
+            model=get_openai_model(),
+            input=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Explain lab observations in plain language for a non-clinical reader. "
+                        "Do not diagnose, infer a disease, estimate risk, recommend treatment, "
+                        "or tell the user to change medication, diet, or lifestyle. "
+                        "Use cautious wording and tell the user to review results with a licensed clinician."
+                    ),
+                },
+                {"role": "user", "content": observation_context},
+            ],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "lab_explanations",
+                    "strict": True,
+                    "schema": SIMPLIFICATION_SCHEMA,
+                }
+            },
+        )
+    except Exception as exc:
+        raise SimplificationError(f"OpenAI simplification failed: {exc}") from exc
+
+    try:
+        payload = json.loads(response.output_text)
+    except (AttributeError, json.JSONDecodeError) as exc:
+        raise SimplificationError("OpenAI returned an unreadable simplification response.") from exc
+
+    explanations = payload.get("explanations")
+    if not isinstance(explanations, list):
+        raise SimplificationError("OpenAI response did not include an explanations list.")
+    return explanations

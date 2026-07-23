@@ -1,6 +1,11 @@
 import unittest
 
-from app.llm import LAB_OBSERVATION_SCHEMA, build_report_text
+from app.llm import (
+    LAB_OBSERVATION_SCHEMA,
+    SIMPLIFICATION_SCHEMA,
+    build_observation_context,
+    build_report_text,
+)
 
 
 class LabExtractionTests(unittest.TestCase):
@@ -24,6 +29,33 @@ class LabExtractionTests(unittest.TestCase):
         self.assertIn("page_number", observation_schema["required"])
         self.assertIn("source_snippet", observation_schema["required"])
         self.assertFalse(observation_schema["additionalProperties"])
+
+    def test_build_observation_context_includes_source_detail(self):
+        observations = [
+            {
+                "test_name": "HbA1c",
+                "value": 5.8,
+                "unit": "%",
+                "reference_range": "4.0-5.6",
+                "abnormal_flag": "High",
+                "page_number": 2,
+                "source_snippet": "HbA1c 5.8 % High",
+            }
+        ]
+
+        context = build_observation_context(observations)
+
+        self.assertIn("Test: HbA1c", context)
+        self.assertIn("Reference range: 4.0-5.6", context)
+        self.assertIn("Source page: 2", context)
+        self.assertIn("Source snippet: HbA1c 5.8 % High", context)
+
+    def test_simplification_schema_requires_caution(self):
+        explanation_schema = SIMPLIFICATION_SCHEMA["properties"]["explanations"]["items"]
+
+        self.assertIn("caution", explanation_schema["required"])
+        self.assertIn("source_page", explanation_schema["required"])
+        self.assertFalse(explanation_schema["additionalProperties"])
 
 
 if __name__ == "__main__":

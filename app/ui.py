@@ -11,7 +11,12 @@ from app.db import (
     replace_lab_observations,
     replace_report_pages,
 )
-from app.llm import LabExtractionError, extract_lab_observations
+from app.llm import (
+    LabExtractionError,
+    SimplificationError,
+    extract_lab_observations,
+    simplify_lab_observations,
+)
 from app.pdf_parser import PdfParsingError, combined_preview, extract_pages, page_text_stats
 from app.storage import UploadValidationError, save_uploaded_pdf
 
@@ -160,6 +165,30 @@ def report_history() -> None:
             ]
         )
         st.dataframe(observation_frame, hide_index=True, use_container_width=True)
+
+        if st.button("Simplify lab values"):
+            try:
+                explanations = simplify_lab_observations(lab_observations)
+            except SimplificationError as exc:
+                st.error(str(exc))
+            else:
+                explanation_frame = pd.DataFrame(
+                    [
+                        {
+                            "Test": explanation["test_name"],
+                            "Plain name": explanation["plain_language_name"],
+                            "Explanation": explanation["explanation"],
+                            "Result context": explanation["result_context"],
+                            "Caution": explanation["caution"],
+                            "Source page": explanation["source_page"],
+                        }
+                        for explanation in explanations
+                    ]
+                )
+                st.warning(
+                    "These explanations are educational only and must be checked against the source report with a licensed clinician."
+                )
+                st.dataframe(explanation_frame, hide_index=True, use_container_width=True)
     else:
         st.info("No lab values extracted for this report yet.")
 
