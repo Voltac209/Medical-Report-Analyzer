@@ -50,6 +50,21 @@ CREATE TABLE IF NOT EXISTS lab_observations (
 
 CREATE INDEX IF NOT EXISTS idx_lab_observations_report_id
 ON lab_observations(report_id);
+
+CREATE TABLE IF NOT EXISTS lab_explanations (
+    id SERIAL PRIMARY KEY,
+    report_id INTEGER NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+    test_name TEXT NOT NULL,
+    plain_language_name TEXT NOT NULL,
+    explanation TEXT NOT NULL,
+    result_context TEXT NOT NULL,
+    caution TEXT NOT NULL,
+    source_page INTEGER,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_lab_explanations_report_id
+ON lab_explanations(report_id);
 """
 
 MIGRATION_SQL = """
@@ -219,6 +234,62 @@ def get_lab_observations(report_id: int) -> list[dict]:
                 page_number,
                 source_snippet
             FROM lab_observations
+            WHERE report_id = %s
+            ORDER BY test_name, id
+            """,
+            (report_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def replace_lab_explanations(report_id: int, explanations: Iterable[dict]) -> None:
+    with get_connection() as conn:
+        conn.execute("DELETE FROM lab_explanations WHERE report_id = %s", (report_id,))
+        rows = [
+            (
+                report_id,
+                explanation["test_name"],
+                explanation["plain_language_name"],
+                explanation["explanation"],
+                explanation["result_context"],
+                explanation["caution"],
+                explanation.get("source_page"),
+            )
+            for explanation in explanations
+        ]
+        if rows:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    """
+                    INSERT INTO lab_explanations (
+                        report_id,
+                        test_name,
+                        plain_language_name,
+                        explanation,
+                        result_context,
+                        caution,
+                        source_page
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    rows,
+                )
+        conn.commit()
+
+
+def get_lab_explanations(report_id: int) -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                id,
+                test_name,
+                plain_language_name,
+                explanation,
+                result_context,
+                caution,
+                source_page
+            FROM lab_explanations
             WHERE report_id = %s
             ORDER BY test_name, id
             """,

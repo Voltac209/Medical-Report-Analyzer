@@ -4,10 +4,12 @@ import streamlit as st
 from app.db import (
     create_report,
     format_uploaded_at,
+    get_lab_explanations,
     get_lab_observations,
     get_report_pages,
     init_db,
     list_reports,
+    replace_lab_explanations,
     replace_lab_observations,
     replace_report_pages,
 )
@@ -134,6 +136,7 @@ def report_history() -> None:
     )
     pages = get_report_pages(selected_id)
     lab_observations = get_lab_observations(selected_id)
+    lab_explanations = get_lab_explanations(selected_id)
 
     if st.button("Extract lab values"):
         try:
@@ -169,26 +172,36 @@ def report_history() -> None:
         if st.button("Simplify lab values"):
             try:
                 explanations = simplify_lab_observations(lab_observations)
+                replace_lab_explanations(selected_id, explanations)
             except SimplificationError as exc:
                 st.error(str(exc))
+            except Exception as exc:
+                st.error("Could not save simplified lab explanations.")
+                st.code(str(exc))
             else:
-                explanation_frame = pd.DataFrame(
-                    [
-                        {
-                            "Test": explanation["test_name"],
-                            "Plain name": explanation["plain_language_name"],
-                            "Explanation": explanation["explanation"],
-                            "Result context": explanation["result_context"],
-                            "Caution": explanation["caution"],
-                            "Source page": explanation["source_page"],
-                        }
-                        for explanation in explanations
-                    ]
-                )
-                st.warning(
-                    "These explanations are educational only and must be checked against the source report with a licensed clinician."
-                )
-                st.dataframe(explanation_frame, hide_index=True, use_container_width=True)
+                st.success(f"Saved {len(explanations)} simplified explanation(s).")
+                lab_explanations = get_lab_explanations(selected_id)
+
+        if lab_explanations:
+            explanation_frame = pd.DataFrame(
+                [
+                    {
+                        "Test": explanation["test_name"],
+                        "Plain name": explanation["plain_language_name"],
+                        "Explanation": explanation["explanation"],
+                        "Result context": explanation["result_context"],
+                        "Caution": explanation["caution"],
+                        "Source page": explanation["source_page"],
+                    }
+                    for explanation in lab_explanations
+                ]
+            )
+            st.warning(
+                "These explanations are educational only and must be checked against the source report with a licensed clinician."
+            )
+            st.dataframe(explanation_frame, hide_index=True, use_container_width=True)
+        else:
+            st.info("No simplified explanations saved for this report yet.")
     else:
         st.info("No lab values extracted for this report yet.")
 
