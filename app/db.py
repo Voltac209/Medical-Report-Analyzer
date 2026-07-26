@@ -179,6 +179,7 @@ def get_report_pages(report_id: int) -> list[dict]:
 
 def replace_lab_observations(report_id: int, observations: Iterable[dict]) -> None:
     with get_connection() as conn:
+        conn.execute("DELETE FROM lab_explanations WHERE report_id = %s", (report_id,))
         conn.execute("DELETE FROM lab_observations WHERE report_id = %s", (report_id,))
         rows = [
             (

@@ -98,6 +98,49 @@ def upload_report() -> None:
             )
 
 
+def run_full_analysis(report_id: int, pages: list[dict]) -> tuple[int, int]:
+    extracted = extract_lab_observations(pages)
+    replace_lab_observations(report_id, extracted)
+
+    explanations = simplify_lab_observations(extracted)
+    replace_lab_explanations(report_id, explanations)
+    return len(extracted), len(explanations)
+
+
+def observation_table(lab_observations: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Test": observation["test_name"],
+                "Value": observation["value"],
+                "Unit": observation["unit"],
+                "Reference range": observation["reference_range"],
+                "Flag": observation["abnormal_flag"],
+                "Date": observation["report_date"],
+                "Page": observation["page_number"],
+                "Source": observation["source_snippet"],
+            }
+            for observation in lab_observations
+        ]
+    )
+
+
+def explanation_table(lab_explanations: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Test": explanation["test_name"],
+                "Plain name": explanation["plain_language_name"],
+                "Explanation": explanation["explanation"],
+                "Result context": explanation["result_context"],
+                "Caution": explanation["caution"],
+                "Source page": explanation["source_page"],
+            }
+            for explanation in lab_explanations
+        ]
+    )
+
+
 def report_history() -> None:
     st.subheader("Recent uploads")
     try:
@@ -138,6 +181,27 @@ def report_history() -> None:
     lab_observations = get_lab_observations(selected_id)
     lab_explanations = get_lab_explanations(selected_id)
 
+    st.caption(
+        f"Stored analysis: {len(lab_observations)} lab value(s), "
+        f"{len(lab_explanations)} simplified explanation(s)."
+    )
+
+    if st.button("Analyze report", type="primary"):
+        try:
+            with st.spinner("Extracting lab values and simplifying terminology..."):
+                observation_count, explanation_count = run_full_analysis(selected_id, pages)
+        except (LabExtractionError, SimplificationError) as exc:
+            st.error(str(exc))
+        except Exception as exc:
+            st.error("Could not complete report analysis.")
+            st.code(str(exc))
+        else:
+            st.success(
+                f"Saved {observation_count} lab value(s) and {explanation_count} explanation(s)."
+            )
+            lab_observations = get_lab_observations(selected_id)
+            lab_explanations = get_lab_explanations(selected_id)
+
     if st.button("Extract lab values"):
         try:
             extracted = extract_lab_observations(pages)
@@ -152,22 +216,7 @@ def report_history() -> None:
             lab_observations = get_lab_observations(selected_id)
 
     if lab_observations:
-        observation_frame = pd.DataFrame(
-            [
-                {
-                    "Test": observation["test_name"],
-                    "Value": observation["value"],
-                    "Unit": observation["unit"],
-                    "Reference range": observation["reference_range"],
-                    "Flag": observation["abnormal_flag"],
-                    "Date": observation["report_date"],
-                    "Page": observation["page_number"],
-                    "Source": observation["source_snippet"],
-                }
-                for observation in lab_observations
-            ]
-        )
-        st.dataframe(observation_frame, hide_index=True, use_container_width=True)
+        st.dataframe(observation_table(lab_observations), hide_index=True, use_container_width=True)
 
         if st.button("Simplify lab values"):
             try:
@@ -183,23 +232,10 @@ def report_history() -> None:
                 lab_explanations = get_lab_explanations(selected_id)
 
         if lab_explanations:
-            explanation_frame = pd.DataFrame(
-                [
-                    {
-                        "Test": explanation["test_name"],
-                        "Plain name": explanation["plain_language_name"],
-                        "Explanation": explanation["explanation"],
-                        "Result context": explanation["result_context"],
-                        "Caution": explanation["caution"],
-                        "Source page": explanation["source_page"],
-                    }
-                    for explanation in lab_explanations
-                ]
-            )
             st.warning(
                 "These explanations are educational only and must be checked against the source report with a licensed clinician."
             )
-            st.dataframe(explanation_frame, hide_index=True, use_container_width=True)
+            st.dataframe(explanation_table(lab_explanations), hide_index=True, use_container_width=True)
         else:
             st.info("No simplified explanations saved for this report yet.")
     else:
