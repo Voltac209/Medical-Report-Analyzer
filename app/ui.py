@@ -1,9 +1,12 @@
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
+from app.comparison import build_trend_points, repeated_lab_names
 from app.db import (
     create_report,
     format_uploaded_at,
+    get_lab_observations_for_reports,
     get_lab_explanations,
     get_lab_observations,
     get_report_pages,
@@ -251,6 +254,57 @@ def report_history() -> None:
         st.info("This report has no stored selectable text yet.")
 
 
+def report_comparison() -> None:
+    st.subheader("Compare reports")
+    try:
+        reports = list_reports()
+    except Exception as exc:
+        st.error("Could not load reports from PostgreSQL.")
+        st.code(str(exc))
+        return
+
+    if len(reports) < 2:
+        st.info("Upload and analyze at least two reports to compare lab trends.")
+        return
+
+    selected_ids = st.multiselect(
+        "Reports to compare",
+        options=[report["id"] for report in reports],
+        default=[report["id"] for report in reports[:2]],
+        format_func=lambda report_id: next(
+            report["original_filename"] for report in reports if report["id"] == report_id
+        ),
+    )
+    if len(selected_ids) < 2:
+        st.info("Select at least two reports.")
+        return
+
+    observations = get_lab_observations_for_reports(selected_ids)
+    trend_points = build_trend_points(observations)
+    repeated_tests = repeated_lab_names(trend_points)
+
+    if not repeated_tests:
+        st.info("No repeated numeric lab values found across the selected reports yet.")
+        return
+
+    selected_test = st.selectbox("Lab trend", repeated_tests)
+    selected_points = [
+        point for point in trend_points if point["Normalized test"] == selected_test
+    ]
+    trend_frame = pd.DataFrame(selected_points)
+    st.dataframe(trend_frame, hide_index=True, use_container_width=True)
+
+    chart = px.line(
+        trend_frame,
+        x="Date",
+        y="Value",
+        markers=True,
+        hover_data=["Report", "Test", "Unit", "Reference range", "Flag", "Source page"],
+        title=f"{selected_test} trend",
+    )
+    st.plotly_chart(chart, use_container_width=True)
+
+
 def main() -> None:
     st.set_page_config(page_title="Medical Report Simplifier", layout="wide")
     st.title("Medical Report Simplifier")
@@ -260,11 +314,13 @@ def main() -> None:
     if not db_ready:
         return
 
-    left, right = st.columns([1, 1])
-    with left:
+    upload_tab, report_tab, compare_tab = st.tabs(["Upload", "Reports", "Compare"])
+    with upload_tab:
         upload_report()
-    with right:
+    with report_tab:
         report_history()
+    with compare_tab:
+        report_comparison()
 
 
 if __name__ == "__main__":

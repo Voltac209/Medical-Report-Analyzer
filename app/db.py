@@ -243,6 +243,37 @@ def get_lab_observations(report_id: int) -> list[dict]:
         return [dict(row) for row in rows]
 
 
+def get_lab_observations_for_reports(report_ids: list[int]) -> list[dict]:
+    if not report_ids:
+        return []
+
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                lab_observations.id,
+                lab_observations.report_id,
+                reports.original_filename,
+                reports.uploaded_at,
+                lab_observations.test_name,
+                lab_observations.normalized_name,
+                lab_observations.value,
+                lab_observations.unit,
+                lab_observations.reference_range,
+                lab_observations.abnormal_flag,
+                lab_observations.report_date,
+                lab_observations.page_number,
+                lab_observations.source_snippet
+            FROM lab_observations
+            JOIN reports ON reports.id = lab_observations.report_id
+            WHERE lab_observations.report_id = ANY(%s)
+            ORDER BY lab_observations.test_name, reports.uploaded_at
+            """,
+            (report_ids,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
 def replace_lab_explanations(report_id: int, explanations: Iterable[dict]) -> None:
     with get_connection() as conn:
         conn.execute("DELETE FROM lab_explanations WHERE report_id = %s", (report_id,))
