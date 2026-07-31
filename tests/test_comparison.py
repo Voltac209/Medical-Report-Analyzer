@@ -1,7 +1,12 @@
 import unittest
 from decimal import Decimal
 
-from app.comparison import build_trend_points, normalize_lab_name, repeated_lab_names
+from app.comparison import (
+    build_trend_points,
+    normalize_lab_name,
+    repeated_lab_names,
+    summarize_trend,
+)
 
 
 class ComparisonTests(unittest.TestCase):
@@ -49,6 +54,20 @@ class ComparisonTests(unittest.TestCase):
         ]
 
         self.assertEqual(repeated_lab_names(trend_points), ["hba1c"])
+
+    def test_summarize_trend_reports_direction_and_change(self):
+        points = [
+            {"Report ID": 1, "Date": "2026-01-01", "Value": 5.8, "Unit": "%"},
+            {"Report ID": 2, "Date": "2026-02-01", "Value": 5.5, "Unit": "%"},
+        ]
+
+        summary = summarize_trend(points)
+
+        self.assertEqual(summary["Start"], 5.8)
+        self.assertEqual(summary["Latest"], 5.5)
+        self.assertEqual(summary["Change"], -0.3)
+        self.assertEqual(summary["Direction"], "Decreased")
+        self.assertEqual(summary["Unit"], "%")
 
 
 if __name__ == "__main__":

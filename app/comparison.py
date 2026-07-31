@@ -85,3 +85,33 @@ def repeated_lab_names(trend_points: list[dict]) -> list[str]:
         for test_name, report_ids in report_ids_by_test.items()
         if len(report_ids) >= 2
     )
+
+
+def summarize_trend(points: list[dict]) -> dict:
+    if not points:
+        return {
+            "Start": None,
+            "Latest": None,
+            "Change": None,
+            "Direction": "No data",
+        }
+
+    ordered_points = sorted(points, key=lambda point: (point.get("Date") or "", point["Report ID"]))
+    first = ordered_points[0]
+    latest = ordered_points[-1]
+    change = latest["Value"] - first["Value"]
+
+    if change > 0:
+        direction = "Increased"
+    elif change < 0:
+        direction = "Decreased"
+    else:
+        direction = "No change"
+
+    return {
+        "Start": first["Value"],
+        "Latest": latest["Value"],
+        "Change": round(change, 3),
+        "Direction": direction,
+        "Unit": latest.get("Unit") or first.get("Unit") or "",
+    }

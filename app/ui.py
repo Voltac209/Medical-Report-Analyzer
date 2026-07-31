@@ -2,7 +2,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from app.comparison import build_trend_points, repeated_lab_names
+from app.comparison import build_trend_points, repeated_lab_names, summarize_trend
 from app.db import (
     create_report,
     format_uploaded_at,
@@ -41,6 +41,11 @@ def show_disclaimer() -> None:
     )
 
 
+def show_app_header() -> None:
+    st.title("Medical Report Simplifier")
+    st.caption("Upload reports, extract lab values, simplify results, and compare trends.")
+
+
 def initialize_database() -> bool:
     try:
         init_db()
@@ -54,6 +59,7 @@ def initialize_database() -> bool:
 
 def upload_report() -> None:
     st.subheader("Upload medical PDF")
+    st.caption("Use text-based lab-report PDFs. Scanned PDFs need OCR, which is planned later.")
     uploaded_file = st.file_uploader("Choose a PDF report", type=["pdf"])
 
     if uploaded_file is None:
@@ -128,6 +134,23 @@ def observation_table(lab_observations: list[dict]) -> pd.DataFrame:
     )
 
 
+def reports_table(reports: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "ID": report["id"],
+                "Filename": report["original_filename"],
+                "Pages": report["page_count"],
+                "Text pages": report["text_page_count"],
+                "Text chars": report["text_char_count"],
+                "Status": report["status"],
+                "Uploaded": format_uploaded_at(report["uploaded_at"]),
+            }
+            for report in reports
+        ]
+    )
+
+
 def explanation_table(lab_explanations: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(
         [
@@ -157,21 +180,15 @@ def report_history() -> None:
         st.info("No reports uploaded yet.")
         return
 
-    frame = pd.DataFrame(
-        [
-            {
-                "ID": report["id"],
-                "Filename": report["original_filename"],
-                "Pages": report["page_count"],
-                "Text pages": report["text_page_count"],
-                "Text chars": report["text_char_count"],
-                "Status": report["status"],
-                "Uploaded": format_uploaded_at(report["uploaded_at"]),
-            }
-            for report in reports
-        ]
-    )
-    st.dataframe(frame, hide_index=True, use_container_width=True)
+    parsed_reports = [report for report in reports if report["status"] == "parsed"]
+    no_text_reports = [report for report in reports if report["status"] == "needs_ocr"]
+
+    metric_cols = st.columns(3)
+    metric_cols[0].metric("Reports", len(reports))
+    metric_cols[1].metric("Text-based", len(parsed_reports))
+    metric_cols[2].metric("Need OCR", len(no_text_reports))
+
+    st.dataframe(reports_table(reports), hide_index=True, use_container_width=True)
 
     selected_id = st.selectbox(
         "Select a report",
@@ -183,13 +200,14 @@ def report_history() -> None:
     pages = get_report_pages(selected_id)
     lab_observations = get_lab_observations(selected_id)
     lab_explanations = get_lab_explanations(selected_id)
+    has_source_text = bool(pages)
 
     st.caption(
         f"Stored analysis: {len(lab_observations)} lab value(s), "
         f"{len(lab_explanations)} simplified explanation(s)."
     )
 
-    if st.button("Analyze report", type="primary"):
+    if st.button("Analyze report", type="primary", disabled=not has_source_text):
         try:
             with st.spinner("Extracting lab values and simplifying terminology..."):
                 observation_count, explanation_count = run_full_analysis(selected_id, pages)
@@ -204,24 +222,27 @@ def report_history() -> None:
             )
             lab_observations = get_lab_observations(selected_id)
             lab_explanations = get_lab_explanations(selected_id)
+    if not has_source_text:
+        st.info("This report has no selectable text, so analysis is disabled.")
 
-    if st.button("Extract lab values"):
-        try:
-            extracted = extract_lab_observations(pages)
-            replace_lab_observations(selected_id, extracted)
-        except LabExtractionError as exc:
-            st.error(str(exc))
-        except Exception as exc:
-            st.error("Could not save extracted lab values.")
-            st.code(str(exc))
-        else:
-            st.success(f"Saved {len(extracted)} lab observation(s).")
-            lab_observations = get_lab_observations(selected_id)
+    with st.expander("Advanced single-step actions"):
+        extract_disabled = not has_source_text
+        simplify_disabled = not lab_observations
+        if st.button("Extract lab values", disabled=extract_disabled):
+            try:
+                extracted = extract_lab_observations(pages)
+                replace_lab_observations(selected_id, extracted)
+            except LabExtractionError as exc:
+                st.error(str(exc))
+            except Exception as exc:
+                st.error("Could not save extracted lab values.")
+                st.code(str(exc))
+            else:
+                st.success(f"Saved {len(extracted)} lab observation(s).")
+                lab_observations = get_lab_observations(selected_id)
+                lab_explanations = get_lab_explanations(selected_id)
 
-    if lab_observations:
-        st.dataframe(observation_table(lab_observations), hide_index=True, use_container_width=True)
-
-        if st.button("Simplify lab values"):
+        if st.button("Simplify lab values", disabled=simplify_disabled):
             try:
                 explanations = simplify_lab_observations(lab_observations)
                 replace_lab_explanations(selected_id, explanations)
@@ -234,22 +255,28 @@ def report_history() -> None:
                 st.success(f"Saved {len(explanations)} simplified explanation(s).")
                 lab_explanations = get_lab_explanations(selected_id)
 
-        if lab_explanations:
-            st.warning(
-                "These explanations are educational only and must be checked against the source report with a licensed clinician."
-            )
-            st.dataframe(explanation_table(lab_explanations), hide_index=True, use_container_width=True)
-        else:
-            st.info("No simplified explanations saved for this report yet.")
+    if lab_observations:
+        st.markdown("**Extracted lab values**")
+        st.dataframe(observation_table(lab_observations), hide_index=True, use_container_width=True)
     else:
         st.info("No lab values extracted for this report yet.")
 
+    if lab_explanations:
+        st.markdown("**Simplified explanations**")
+        st.warning(
+            "These explanations are educational only and must be checked against the source report with a licensed clinician."
+        )
+        st.dataframe(explanation_table(lab_explanations), hide_index=True, use_container_width=True)
+    elif lab_observations:
+        st.info("No simplified explanations saved for this report yet.")
+
     if pages:
-        preview_pages = [
-            {"page_number": page["page_number"], "text": page["text_content"]}
-            for page in pages
-        ]
-        st.text_area("Stored source text", combined_preview(preview_pages), height=260)
+        with st.expander("Stored source text"):
+            preview_pages = [
+                {"page_number": page["page_number"], "text": page["text_content"]}
+                for page in pages
+            ]
+            st.text_area("Source preview", combined_preview(preview_pages), height=260)
     else:
         st.info("This report has no stored selectable text yet.")
 
@@ -292,6 +319,18 @@ def report_comparison() -> None:
         point for point in trend_points if point["Normalized test"] == selected_test
     ]
     trend_frame = pd.DataFrame(selected_points)
+    summary = summarize_trend(selected_points)
+    latest_label = (
+        f"{summary['Latest']} {summary.get('Unit', '')}".strip()
+        if summary["Latest"] is not None
+        else "No data"
+    )
+
+    metric_cols = st.columns(3)
+    metric_cols[0].metric("Latest", latest_label)
+    metric_cols[1].metric("Change", summary["Change"])
+    metric_cols[2].metric("Direction", summary["Direction"])
+
     st.dataframe(trend_frame, hide_index=True, use_container_width=True)
 
     chart = px.line(
@@ -307,7 +346,7 @@ def report_comparison() -> None:
 
 def main() -> None:
     st.set_page_config(page_title="Medical Report Simplifier", layout="wide")
-    st.title("Medical Report Simplifier")
+    show_app_header()
     show_disclaimer()
 
     db_ready = initialize_database()
